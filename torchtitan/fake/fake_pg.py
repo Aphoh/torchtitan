@@ -9,6 +9,9 @@ from torch._C._distributed_c10d import (
     FakeWork,
 )
 
+# Sets up fake collective impls
+from torch.distributed._tools import fake_collectives
+
 
 class FakeStore(dist.Store):
     """
@@ -48,8 +51,3 @@ def create_fakework(args, return_first_arg=True):  # type: ignore[no-untyped-def
     work.seq_id = generate_unique_id()
     fakework_script_obj = work.boxed()
     return (args[0], fakework_script_obj) if return_first_arg else fakework_script_obj
-
-
-@torch.library.register_fake("c10d::_allgather_base_")
-def _allgather_base_fake(*args):
-    return create_fakework(args)
