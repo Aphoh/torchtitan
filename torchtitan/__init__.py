@@ -13,3 +13,4 @@ import torchtitan.components.float8  # noqa: F401
 # will be called.
 import torchtitan.experiments  # noqa: F401
 import torchtitan.models  # noqa: F401
+import torchtitan.fake.fake_pg # noqa: F401
