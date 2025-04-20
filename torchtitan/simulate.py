@@ -1,3 +1,5 @@
+from collections import Counter
+import contextlib
 import copy
 import os
 import random
@@ -6,15 +8,17 @@ from math import prod
 from typing import List, Iterator, Tuple
 import time
 from typing import List, Dict, Tuple, Optional, Any, Iterator
-import math
 import torch
 import torch.fx.experimental
 import torch.fx.experimental.proxy_tensor
 import torch.fx.experimental.symbolic_shapes
 
+from torchtitan.components.ft import FTManager
 from torchtitan.components.tokenizer import Tokenizer
 from torchtitan.config_manager import JobConfig
 from torchtitan.distributed.parallel_dims import ParallelDims
+from torchtitan.distributed import utils as dist_utils
+from torchtitan.models.llama3.model import Transformer, TransformerModelArgs
 from torchtitan.protocols.train_spec import get_train_spec, TrainSpec
 from torchtitan.tools.logging import logger
 from torchtitan.fake.fake_pg import FakeStore
@@ -53,10 +57,6 @@ def prime_factorize(n: int) -> List[int]:
             factors.append(n)
             break
     return factors
-
-
-from collections import Counter
-from typing import List, Iterator
 
 
 def lists_from_primes_gen(nums: List[int], d: int) -> Iterator[List[int]]:
@@ -116,11 +116,12 @@ def generate_parallelism_configs(world_size: int) -> Iterator[Dict[str, int]]:
 
 
 def trace_model(
-    ModelCls: Any,
-    model_args: Any,
+    *,
+    model_cls: type[Transformer],
+    model_args: TransformerModelArgs,
     job_config: JobConfig,
-    device: torch.device,
     train_spec: TrainSpec,
+    device: torch.device,
     world_size: int,
     parallelism_config: Optional[Dict[str, int]] = None,
 ) -> float:
@@ -128,13 +129,16 @@ def trace_model(
     Trace the model and measure forward pass latency.
 
     Args:
+        model: Model instance to trace
         job_config: Configuration for the job
-        device: Device to run the model on
         parallelism_config: Optional custom parallelism configuration
 
     Returns:
-        Forward pass latency in seconds
+        Tuple of (forward pass latency in seconds, timing breakdown dict)
     """
+    timing = {}
+    start_total = time.time()
+
     # Use provided parallelism config or get from job_config
     if parallelism_config is None:
         pc = job_config.parallelism
@@ -157,46 +161,96 @@ def trace_model(
         world_size=world_size,
         enable_loss_parallel=not pc.disable_loss_parallel,
     )
+    assert not parallel_dims.pp_enabled
 
-    world_mesh = parallel_dims.build_mesh(device_type="cpu")
+    start_mesh = time.time()
+    world_mesh = parallel_dims.build_mesh(device_type=device.type)
+    timing["build_mesh"] = time.time() - start_mesh
+
+    train_context = dist_utils.get_train_context(
+        parallel_dims.loss_parallel_enabled,
+        job_config.parallelism.enable_compiled_autograd,
+    )
 
     shape_env = torch.fx.experimental.symbolic_shapes.ShapeEnv()
-    with torch._subclasses.FakeTensorMode(
+    fake_mode = torch._subclasses.FakeTensorMode(
         static_shapes=True, allow_non_fake_inputs=True, shape_env=shape_env
-    ):
-        with device:
-            model = ModelCls.from_model_args(model_args)
+    )
+    with fake_mode, device:
+        loss_fn = train_spec.build_loss_fn(job_config)
 
-        assert not parallel_dims.pp_enabled
-        # apply PT-D Tensor Parallel, activation checkpointing, torch.compile, Data Parallel
-        model = train_spec.parallelize_fn(model, world_mesh, parallel_dims, job_config)
 
-        logger.info(f"Model {model} created with {train_spec.name} spec")
-        seq_length = model_args.max_seq_len
+        start_model = time.time()
+        model = model_cls.from_model_args(model_args)
+        timing["model_init"] = time.time() - start_model
 
-        tokens = torch.randint(
-            0, 128256, (1, seq_length), dtype=torch.int32, device=device
+        # Apply parallelism to the model
+        start_parallelize = time.time()
+        model = train_spec.parallelize_fn(
+            model, world_mesh, parallel_dims, job_config
+        )
+        model_parts = [model]
+        timing["parallelize"] = time.time() - start_parallelize
+
+        seq_length = model.model_args.max_seq_len
+        optimizers = train_spec.build_optimizers_fn(
+            model_parts, job_config, FTManager(None)
+        )
+        # Create the model just once
+        inputs = torch.randint(
+            0, 128256, (1, seq_length), dtype=torch.int32
+        )
+        labels = inputs.clone().detach().to(torch.long)
+        optional_context_parallel_ctx = (
+            dist_utils.create_context_parallel_ctx(
+                cp_mesh=world_mesh["cp"],
+                cp_buffers=[inputs, labels] + [m.freqs_cis for m in model_parts],
+                cp_seq_dims=[1, 1] + [0 for _ in model_parts],
+                cp_no_restore_buffers={inputs, labels},
+                cp_rotate_method=job_config.parallelism.context_parallel_rotate_method,
+            )
+            if parallel_dims.cp_enabled
+            else None
         )
 
-        # Measure forward pass latency
-        start_time = time.time()
+        def step():
+            optimizers.zero_grad()
+
+            with train_context(optional_context_parallel_ctx):
+                assert len(model_parts) == 1
+                pred = model_parts[0](inputs)
+                loss = loss_fn(pred, labels)
+                # need to free to before bwd to avoid peaking memory
+                del pred
+                loss.backward()
+
+            dist_utils.clip_grad_norm_(
+                [p for m in model_parts for p in m.parameters()],
+                job_config.training.max_norm,
+                foreach=True,
+                pp_mesh=world_mesh["pp"] if parallel_dims.pp_enabled else None,
+            )
+            optimizers.step()
+
+        start_tracing = time.time()
         make_fx_out = torch.fx.experimental.proxy_tensor.make_fx(
-            model,
+            step,
             tracing_mode="fake",
             decomposition_table={},
             _allow_non_fake_inputs=True,
             record_module_stack=True,
-        )(tokens)
-        end_time = time.time()
+        )()
+        timing["tracing"] = time.time() - start_tracing
 
-        latency = end_time - start_time
-        print(f"Trace latency: {latency:.4f} seconds")
+        timing["total"] = time.time() - start_total
 
-        return latency
+        return timing["total"], timing
 
 
 def main() -> None:
     """Main function to run the simulation."""
+    overall_start = time.time()
+
     job_config = JobConfig()
     job_config.maybe_add_custom_args()
     job_config.parse_args()
@@ -209,36 +263,45 @@ def main() -> None:
 
     device = torch.device("cpu")
     world_size = int(os.environ.get("WORLD_SIZE", 1))
+
+    setup_start = time.time()
     torch.distributed.init_process_group(
         backend="fake",
         world_size=world_size,
         store=FakeStore(),
         rank=int(os.environ.get("RANK", 0)),
     )
+    setup_time = time.time() - setup_start
+    print(f"Setup time: {setup_time:.4f} seconds")
 
     train_spec = get_train_spec(job_config.model.name)
     ModelCls = train_spec.cls
     model_args = train_spec.config[job_config.model.flavor]
+    model_args.n_layers = 1
     model_args.update_from_config(job_config, tokenizer=MockTokenizer(128256))
 
     print(f"World size: {world_size}")
     print(f"Prime factorization: {prime_factorize(world_size)}")
 
     results = []
+    timings = []
+
+    # Generate all configurations in advance to show progress
+    configs = list(generate_parallelism_configs(world_size))
+    total_configs = len(configs)
 
     # Try all possible parallelism configurations
-    for i, config in enumerate(generate_parallelism_configs(world_size)):
-        print(f"Testing configuration {i + 1}: {config}")
+    for i, config in enumerate(configs):
+        print(f"Testing configuration {i + 1}/{total_configs}: {config}")
         latency = trace_model(
-            ModelCls,
-            model_args,
-            job_config,
-            device,
-            train_spec,
-            parallelism_config=config,
+            model_cls=ModelCls,
+            model_args=model_args,
+            job_config=job_config,
+            train_spec=train_spec,
             world_size=world_size,
+            parallelism_config=config,
+            device=device,
         )
-        print(f"Configuration {config} latency: {latency:.4f} seconds")
         results.append((f"Config {i + 1}: {config}", latency))
 
     # Print summary of results
@@ -246,6 +309,17 @@ def main() -> None:
     results.sort(key=lambda x: x[1])  # Sort by latency
     for config_name, latency in results:
         print(f"{config_name}: {latency:.4f} seconds")
+
+    # Print timing information
+    print("\n===== TIMING BREAKDOWN =====")
+    avg_times = {
+        k: sum(t.get(k, 0) for t in timings) / len(timings)
+        for k in ["parallelize", "tracing", "total"]
+    }
+    print(f"Average time for parallelize: {avg_times['parallelize']:.4f}s")
+    print(f"Average time for tracing: {avg_times['tracing']:.4f}s")
+    print(f"Average total time per config: {avg_times['total']:.4f}s")
+    print(f"Total script execution time: {time.time() - overall_start:.4f}s")
 
 
 if __name__ == "__main__":
