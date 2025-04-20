@@ -244,7 +244,7 @@ def trace_model(
 
         timing["total"] = time.time() - start_total
 
-        return timing["total"], timing
+        return timing
 
 
 def main() -> None:
@@ -261,7 +261,7 @@ def main() -> None:
     job_config.float8.precompute_float8_dynamic_scale_for_fsdp = False
     job_config.float8.recipe_name = "rowwise"
 
-    device = torch.device("cpu")
+    device = torch.device("cuda")
     world_size = int(os.environ.get("WORLD_SIZE", 1))
 
     setup_start = time.time()
@@ -284,7 +284,6 @@ def main() -> None:
     print(f"Prime factorization: {prime_factorize(world_size)}")
 
     results = []
-    timings = []
 
     # Generate all configurations in advance to show progress
     configs = list(generate_parallelism_configs(world_size))
@@ -293,7 +292,7 @@ def main() -> None:
     # Try all possible parallelism configurations
     for i, config in enumerate(configs):
         print(f"Testing configuration {i + 1}/{total_configs}: {config}")
-        latency = trace_model(
+        timing = trace_model(
             model_cls=ModelCls,
             model_args=model_args,
             job_config=job_config,
@@ -302,25 +301,13 @@ def main() -> None:
             parallelism_config=config,
             device=device,
         )
-        results.append((f"Config {i + 1}: {config}", latency))
+        results.append((f"Config {i + 1}: {config}", timing))
 
     # Print summary of results
     print("\n===== RESULTS SUMMARY =====")
-    results.sort(key=lambda x: x[1])  # Sort by latency
-    for config_name, latency in results:
-        print(f"{config_name}: {latency:.4f} seconds")
-
-    # Print timing information
-    print("\n===== TIMING BREAKDOWN =====")
-    avg_times = {
-        k: sum(t.get(k, 0) for t in timings) / len(timings)
-        for k in ["parallelize", "tracing", "total"]
-    }
-    print(f"Average time for parallelize: {avg_times['parallelize']:.4f}s")
-    print(f"Average time for tracing: {avg_times['tracing']:.4f}s")
-    print(f"Average total time per config: {avg_times['total']:.4f}s")
-    print(f"Total script execution time: {time.time() - overall_start:.4f}s")
-
+    results.sort(key=lambda x: x[1]["total"])  # Sort by latency
+    for config_name, timing in results:
+        print(f"{config_name}: {''.join([f'{k}: {v:.4f} ' for k, v in timing.items()])}")
 
 if __name__ == "__main__":
     main()
