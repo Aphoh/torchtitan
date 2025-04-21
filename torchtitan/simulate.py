@@ -1,27 +1,26 @@
 from collections import Counter
-import contextlib
 import copy
 import os
-import random
-from itertools import product
 from math import prod
-from typing import List, Iterator, Tuple
+from typing import List, Iterator
 import time
-from typing import List, Dict, Tuple, Optional, Any, Iterator
+from typing import Dict, Optional
 import torch
 import torch.fx.experimental
 import torch.fx.experimental.proxy_tensor
 import torch.fx.experimental.symbolic_shapes
+import asyncio
 
 from torchtitan.components.ft import FTManager
 from torchtitan.components.tokenizer import Tokenizer
 from torchtitan.config_manager import JobConfig
 from torchtitan.distributed.parallel_dims import ParallelDims
 from torchtitan.distributed import utils as dist_utils
+from torchtitan.graphser import graph_to_json
 from torchtitan.models.llama3.model import Transformer, TransformerModelArgs
 from torchtitan.protocols.train_spec import get_train_spec, TrainSpec
-from torchtitan.tools.logging import logger
 from torchtitan.fake.fake_pg import FakeStore
+from torch._export.serde.serialize import GraphModuleSerializer
 
 
 class MockTokenizer(Tokenizer):
@@ -106,7 +105,7 @@ def generate_parallelism_configs(world_size: int) -> Iterator[Dict[str, int]]:
         "pp": 1,
     }
 
-    search = ["cp", "dp_shard", "tp"]
+    search = ["dp_shard", "tp", "cp"]
     primes = prime_factorize(world_size)
     for assigsn in lists_from_primes_gen(primes, len(search)):
         config = {**fixed, **dict(zip(search, assigsn))}
@@ -115,7 +114,7 @@ def generate_parallelism_configs(world_size: int) -> Iterator[Dict[str, int]]:
         yield config
 
 
-def trace_model(
+async def trace_model(
     *,
     model_cls: type[Transformer],
     model_args: TransformerModelArgs,
@@ -179,16 +178,13 @@ def trace_model(
     with fake_mode, device:
         loss_fn = train_spec.build_loss_fn(job_config)
 
-
         start_model = time.time()
         model = model_cls.from_model_args(model_args)
         timing["model_init"] = time.time() - start_model
 
         # Apply parallelism to the model
         start_parallelize = time.time()
-        model = train_spec.parallelize_fn(
-            model, world_mesh, parallel_dims, job_config
-        )
+        model = train_spec.parallelize_fn(model, world_mesh, parallel_dims, job_config)
         model_parts = [model]
         timing["parallelize"] = time.time() - start_parallelize
 
@@ -197,9 +193,7 @@ def trace_model(
             model_parts, job_config, FTManager(None)
         )
         # Create the model just once
-        inputs = torch.randint(
-            0, 128256, (1, seq_length), dtype=torch.int32
-        )
+        inputs = torch.randint(0, 128256, (1, seq_length), dtype=torch.int32)
         labels = inputs.clone().detach().to(torch.long)
         optional_context_parallel_ctx = (
             dist_utils.create_context_parallel_ctx(
@@ -213,7 +207,10 @@ def trace_model(
             else None
         )
 
-        def step():
+        def step(opt_sd, model_sd):
+            optimizers.load_state_dict(opt_sd)
+            for m, sd in zip(model_parts, model_sd):
+                m.load_state_dict(sd)
             optimizers.zero_grad()
 
             with train_context(optional_context_parallel_ctx):
@@ -231,6 +228,7 @@ def trace_model(
                 pp_mesh=world_mesh["pp"] if parallel_dims.pp_enabled else None,
             )
             optimizers.step()
+            return opt_sd, model_sd
 
         start_tracing = time.time()
         make_fx_out = torch.fx.experimental.proxy_tensor.make_fx(
@@ -239,15 +237,49 @@ def trace_model(
             decomposition_table={},
             _allow_non_fake_inputs=True,
             record_module_stack=True,
-        )()
+        )(optimizers.state_dict(), [m.state_dict() for m in model_parts])
+        ser = GraphModuleSerializer(None, None)
+        ser.serialize_graph(make_fx_out)
         timing["tracing"] = time.time() - start_tracing
 
         timing["total"] = time.time() - start_total
 
+
+        # TODO: get torch export to work, should be more stable
+        #class Step(torch.nn.Module):
+        #    def __init__(self, model_parts, optimizers):
+        #        super().__init__()
+        #        self.model_parts = model_parts
+        #        self.optimizers = optimizers
+        #    
+        #    def forward(self, inputs, labels):
+        #        with train_context(optional_context_parallel_ctx):
+        #            assert len(model_parts) == 1
+        #            pred = model_parts[0](inputs)
+        #            loss = loss_fn(pred, labels)
+        #            # need to free to before bwd to avoid peaking memory
+        #            del pred
+        #            loss.backward()
+
+        #        dist_utils.clip_grad_norm_(
+        #            [p for m in model_parts for p in m.parameters()],
+        #            job_config.training.max_norm,
+        #            foreach=True,
+        #            pp_mesh=world_mesh["pp"] if parallel_dims.pp_enabled else None,
+        #        )
+        #        optimizers.step()
+
+        #exported = torch.export.export(
+        #    Step(model_parts, optimizers),
+        #    args=(inputs, labels),
+        #    strict=False,
+        #)
+
+
         return timing
 
 
-def main() -> None:
+async def main() -> None:
     """Main function to run the simulation."""
     overall_start = time.time()
 
@@ -290,9 +322,9 @@ def main() -> None:
     total_configs = len(configs)
 
     # Try all possible parallelism configurations
-    for i, config in enumerate(configs):
+    async def run_config(i: int, config: Dict[str, int]):
         print(f"Testing configuration {i + 1}/{total_configs}: {config}")
-        timing = trace_model(
+        timing = await trace_model(
             model_cls=ModelCls,
             model_args=model_args,
             job_config=job_config,
@@ -301,13 +333,20 @@ def main() -> None:
             parallelism_config=config,
             device=device,
         )
-        results.append((f"Config {i + 1}: {config}", timing))
+        return f"Config {i + 1}: {config}", timing
+
+    # Run all configurations in parallel
+    tasks = [run_config(i, config) for i, config in enumerate(configs)]
+    results = await asyncio.gather(*tasks)
 
     # Print summary of results
     print("\n===== RESULTS SUMMARY =====")
     results.sort(key=lambda x: x[1]["total"])  # Sort by latency
     for config_name, timing in results:
-        print(f"{config_name}: {''.join([f'{k}: {v:.4f} ' for k, v in timing.items()])}")
+        print(
+            f"{config_name}: {''.join([f'{k}: {v:.4f} ' for k, v in timing.items()])}"
+        )
+
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
