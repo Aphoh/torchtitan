@@ -1,5 +1,7 @@
 from collections import Counter
+import contextlib
 import copy
+from dataclasses import dataclass
 import os
 from math import prod
 from typing import List, Iterator
@@ -16,11 +18,15 @@ from torchtitan.components.tokenizer import Tokenizer
 from torchtitan.config_manager import JobConfig
 from torchtitan.distributed.parallel_dims import ParallelDims
 from torchtitan.distributed import utils as dist_utils
-from torchtitan.graphser import graph_to_json
 from torchtitan.models.llama3.model import Transformer, TransformerModelArgs
 from torchtitan.protocols.train_spec import get_train_spec, TrainSpec
 from torchtitan.fake.fake_pg import FakeStore
-from torch._export.serde.serialize import GraphModuleSerializer
+from torchtitan import fx_serialize
+import aiofiles
+
+from pure_protobuf.message import BaseMessage
+from pure_protobuf.annotations import Field
+from typing_extensions import Annotated
 
 
 class MockTokenizer(Tokenizer):
@@ -113,6 +119,11 @@ def generate_parallelism_configs(world_size: int) -> Iterator[Dict[str, int]]:
         assert prod(config.values()) == world_size
         yield config
 
+@dataclass
+class TraceResult(BaseMessage):
+    parallel_dims: Annotated[ParallelDims, Field(1)]
+    graph_module: Annotated[fx_serialize.GraphModuleData, Field(2)]
+
 
 async def trace_model(
     *,
@@ -166,16 +177,16 @@ async def trace_model(
     world_mesh = parallel_dims.build_mesh(device_type=device.type)
     timing["build_mesh"] = time.time() - start_mesh
 
-    train_context = dist_utils.get_train_context(
-        parallel_dims.loss_parallel_enabled,
-        job_config.parallelism.enable_compiled_autograd,
-    )
 
     shape_env = torch.fx.experimental.symbolic_shapes.ShapeEnv()
     fake_mode = torch._subclasses.FakeTensorMode(
         static_shapes=True, allow_non_fake_inputs=True, shape_env=shape_env
     )
     with fake_mode, device:
+        train_context = dist_utils.get_train_context(
+            parallel_dims.loss_parallel_enabled,
+            job_config.parallelism.enable_compiled_autograd,
+        )
         loss_fn = train_spec.build_loss_fn(job_config)
 
         start_model = time.time()
@@ -238,51 +249,25 @@ async def trace_model(
             _allow_non_fake_inputs=True,
             record_module_stack=True,
         )(optimizers.state_dict(), [m.state_dict() for m in model_parts])
-        ser = GraphModuleSerializer(None, None)
-        ser.serialize_graph(make_fx_out)
+        # Remove unecessary nodes
+        for node in make_fx_out.graph.nodes:
+            if node.op == "placeholder" and "val" not in node.meta:
+                make_fx_out.graph.erase_node(node)
+        make_fx_out.graph.eliminate_dead_code()
+        make_fx_out.recompile()
         timing["tracing"] = time.time() - start_tracing
+
+        start_export = time.time()
+        result = fx_serialize.serialize(make_fx_out) 
+        timing["export"] = time.time() - start_export
 
         timing["total"] = time.time() - start_total
 
-
-        # TODO: get torch export to work, should be more stable
-        #class Step(torch.nn.Module):
-        #    def __init__(self, model_parts, optimizers):
-        #        super().__init__()
-        #        self.model_parts = model_parts
-        #        self.optimizers = optimizers
-        #    
-        #    def forward(self, inputs, labels):
-        #        with train_context(optional_context_parallel_ctx):
-        #            assert len(model_parts) == 1
-        #            pred = model_parts[0](inputs)
-        #            loss = loss_fn(pred, labels)
-        #            # need to free to before bwd to avoid peaking memory
-        #            del pred
-        #            loss.backward()
-
-        #        dist_utils.clip_grad_norm_(
-        #            [p for m in model_parts for p in m.parameters()],
-        #            job_config.training.max_norm,
-        #            foreach=True,
-        #            pp_mesh=world_mesh["pp"] if parallel_dims.pp_enabled else None,
-        #        )
-        #        optimizers.step()
-
-        #exported = torch.export.export(
-        #    Step(model_parts, optimizers),
-        #    args=(inputs, labels),
-        #    strict=False,
-        #)
-
-
-        return timing
+        return result, timing
 
 
 async def main() -> None:
     """Main function to run the simulation."""
-    overall_start = time.time()
-
     job_config = JobConfig()
     job_config.maybe_add_custom_args()
     job_config.parse_args()
@@ -324,7 +309,7 @@ async def main() -> None:
     # Try all possible parallelism configurations
     async def run_config(i: int, config: Dict[str, int]):
         print(f"Testing configuration {i + 1}/{total_configs}: {config}")
-        timing = await trace_model(
+        proto, timing = await trace_model(
             model_cls=ModelCls,
             model_args=model_args,
             job_config=job_config,
@@ -333,11 +318,17 @@ async def main() -> None:
             parallelism_config=config,
             device=device,
         )
-        return f"Config {i + 1}: {config}", timing
+        out_bytes = bytes(proto)
+        async with aiofiles.open(f"traces/trace_{i + 1}.bin", "wb") as f:
+            await f.write(out_bytes)
+        return f"Config {i}", timing
 
+    os.makedirs("traces", exist_ok=True)
     # Run all configurations in parallel
     tasks = [run_config(i, config) for i, config in enumerate(configs)]
-    results = await asyncio.gather(*tasks)
+    #results = await asyncio.gather(*tasks)
+    for task in tasks:
+        results.append(await task)  
 
     # Print summary of results
     print("\n===== RESULTS SUMMARY =====")

@@ -11,20 +11,23 @@ from functools import cached_property
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 from torchtitan.tools.logging import logger
+from pure_protobuf.message import BaseMessage
+from typing_extensions import Annotated
+from pure_protobuf.annotations import Field
 
 
 __all__ = ["ParallelDims"]
 
 
 @dataclass
-class ParallelDims:
-    dp_replicate: int
-    dp_shard: int
-    cp: int
-    tp: int
-    pp: int
-    world_size: int
-    enable_loss_parallel: bool
+class ParallelDims(BaseMessage):
+    dp_replicate: Annotated[int, Field(1)]
+    dp_shard: Annotated[int, Field(2)]
+    cp: Annotated[int, Field(3)]
+    tp: Annotated[int, Field(4)]
+    pp: Annotated[int, Field(5)]
+    world_size: Annotated[int, Field(6)]
+    enable_loss_parallel: Annotated[bool, Field(7)]
 
     def __post_init__(self):
         self._validate()
