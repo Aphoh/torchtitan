@@ -6,210 +6,55 @@ import typing
 import inspect
 import builtins
 import operator
-from dataclasses import dataclass, asdict, field
-from typing import Dict, List, Any, Optional, Tuple, ClassVar
-from typing_extensions import Self
-from pure_protobuf.annotations import Field
-from pure_protobuf.message import BaseMessage
-from pure_protobuf.one_of import OneOf
-from typing_extensions import Annotated
+from typing import Dict, List, Any
 from google.protobuf.struct_pb2 import NullValue
+from . import torch_titan_pb2 as pb
 
-
-@dataclass
-class TensorShape(BaseMessage):
-    """Represents a sequence of dimensions (e.g., tensor shape)"""
-    dims: Annotated[List[int], Field(1)] = field(default_factory=list)
+def from_python_value(value: Any) -> pb.NodeValue:
+    """Convert a Python value to a NodeValue object for protobuf serialization"""
     
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to a clean dictionary representation"""
-        return {"dims": self.dims}
+    if value is None or value is inspect.Signature.empty:
+        return pb.NodeValue(null_value=NullValue.NULL_VALUE)
+    elif isinstance(value, bool):
+        return pb.NodeValue(bool_value=value)
+    elif isinstance(value, int):
+        return pb.NodeValue(int_value=value)
+    elif isinstance(value, float):
+        return pb.NodeValue(float_value=value)
+    elif isinstance(value, str):
+        return pb.NodeValue(string_value=value)
+    elif isinstance(value, torch.device):
+        return pb.NodeValue(device_value=str(value))
+    elif isinstance(value, torch.dtype):
+        return pb.NodeValue(dtype_value=str(value).split('.')[-1])
+    elif isinstance(value, torch.layout):
+        return pb.NodeValue(layout_value=str(value))
+    elif isinstance(value, torch.memory_format):
+        return pb.NodeValue(memory_format_value=str(value))
+    elif isinstance(value, torch.Size) or (isinstance(value, tuple) and all(isinstance(v, int) for v in value)):
+        return pb.NodeValue(shape_value=pb.TensorShape(dims=list(value)))
+    elif isinstance(value, torch.fx.Node):
+        return pb.NodeValue(node_ref_value=value.name)
+    elif isinstance(value, (list, tuple)):
+        elements = [from_python_value(item) for item in value]
+        return pb.NodeValue(sequence_value=pb.SequenceValue(elements=elements))
+    else:
+        # For other types, try to represent as a string
+        print("Got unknown type:", type(value))
+        try:
+            return pb.NodeValue(repr_value=repr(value))
+        except Exception:
+            print(f"Warning: Could not serialize value of type {type(value)}, using None as fallback")
+            return pb.NodeValue(null_value=NullValue.NULL_VALUE)
 
-
-@dataclass
-class NodeValue(BaseMessage):
-    """Represents a value in a node (arguments, kwargs, etc.)"""
-    
-    # Define OneOf for value types
-    value_oneof: ClassVar[OneOf] = OneOf()
-    which_value = value_oneof.which_one_of_getter()
-    
-    # All possible value fields
-    null_value: Annotated[Optional[int], Field(1, one_of=value_oneof)] = None  # Using int to represent NullValue enum
-    bool_value: Annotated[Optional[bool], Field(2, one_of=value_oneof)] = None
-    int_value: Annotated[Optional[int], Field(3, one_of=value_oneof)] = None
-    float_value: Annotated[Optional[float], Field(4, one_of=value_oneof)] = None
-    string_value: Annotated[Optional[str], Field(5, one_of=value_oneof)] = None
-    device_value: Annotated[Optional[str], Field(6, one_of=value_oneof)] = None
-    dtype_value: Annotated[Optional[str], Field(7, one_of=value_oneof)] = None
-    shape_value: Annotated[Optional[TensorShape], Field(8, one_of=value_oneof)] = None
-    sequence_value: Annotated[Optional[List[Self]], Field(9, one_of=value_oneof)] = None
-    node_ref_value: Annotated[Optional[str], Field(10, one_of=value_oneof)] = None
-    repr_value: Annotated[Optional[str], Field(11, one_of=value_oneof)] = None
-    layout_value: Annotated[Optional[str], Field(12, one_of=value_oneof)] = None
-    memory_format_value: Annotated[Optional[str], Field(13, one_of=value_oneof)] = None
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to a clean dictionary representation with just the value type and actual value"""
-        which = self.which_value()
-        result = {"type": which, "value": self.value}
-        return result
-    
-    @property
-    def value(self) -> Any:
-        """Get the value based on the value_oneof type"""
-        which = self.which_value()
-        
-        if which == "null_value" or self.null_value is not None:
-            return None
-        elif which == "bool_value":
-            return self.bool_value
-        elif which == "int_value":
-            return self.int_value
-        elif which == "float_value":
-            return self.float_value
-        elif which == "string_value":
-            return self.string_value
-        elif which == "node_ref_value":
-            return self.node_ref_value
-        elif which == "device_value":
-            return self.device_value
-        elif which == "dtype_value":
-            return self.dtype_value
-        elif which == "layout_value":
-            return self.layout_value
-        elif which == "memory_format_value":
-            return self.memory_format_value
-        elif which == "shape_value":
-            return tuple(self.shape_value.dims) if self.shape_value else None
-        elif which == "sequence_value":
-            return [v.value for v in self.sequence_value] if self.sequence_value else None
-        elif which == "repr_value":
-            return self.repr_value
-        return None
-    
-    @classmethod
-    def from_python_value(cls, value: Any) -> 'NodeValue':
-        """Convert a Python value to a NodeValue object for protobuf serialization"""
-        node_value = cls()
-        
-        if value is None or value is inspect.Signature.empty:
-            node_value.null_value = int(NullValue.NULL_VALUE)
-        elif isinstance(value, bool):
-            node_value.bool_value = value
-        elif isinstance(value, int):
-            node_value.int_value = value
-        elif isinstance(value, float):
-            node_value.float_value = value
-        elif isinstance(value, str):
-            node_value.string_value = value
-        elif isinstance(value, torch.device):
-            node_value.device_value = str(value)
-        elif isinstance(value, torch.dtype):
-            node_value.dtype_value = str(value).split('.')[-1]
-        elif isinstance(value, torch.layout):
-            node_value.layout_value = str(value)
-        elif isinstance(value, torch.memory_format):
-            node_value.memory_format_value = str(value)
-        elif isinstance(value, torch.Size) or (isinstance(value, tuple) and all(isinstance(v, int) for v in value)):
-            node_value.shape_value = TensorShape(dims=list(value))
-        elif isinstance(value, torch.fx.Node):
-            node_value.node_ref_value = value.name
-        elif isinstance(value, (list, tuple)):
-            elements = [NodeValue.from_python_value(item) for item in value]
-            node_value.sequence_value = elements
-        else:
-            # For other types, try to represent as a string
-            print("Got unknown type:", type(value))
-            try:
-                node_value.repr_value = repr(value)
-            except:
-                print(f"Warning: Could not serialize value of type {type(value)}, using None as fallback")
-                node_value.null_value = int(NullValue.NULL_VALUE)
-        
-        return node_value
-
-
-@dataclass
-class NamedNodeValue(BaseMessage):
-    """Represents a named value in a node (arguments, kwargs, etc.)"""
-    name: Annotated[str, Field(1)]
-    value: Annotated[NodeValue, Field(2)]
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to a clean dictionary representation"""
-        return {
-            "name": self.name,
-            "value": self.value.to_dict()
-        }
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> List[Self]:
-        """Convert a dictionary to a NamedNodeValue object"""
-        named_values = []
-        for k, v in d.items():
-            if not isinstance(k, str):
-                print(f"Warning: Skipping non-string key: {k}")
-                continue
-            named_value = cls(name=k, value=NodeValue.from_python_value(v))
-            named_values.append(named_value)
-        return named_values
-
-
-@dataclass
-class NodeData(BaseMessage):
-    """Represents a node in the FX graph"""
-    name: Annotated[str, Field(1)]
-    op: Annotated[str, Field(2)]  # "placeholder", "call_function", etc.
-    target: Annotated[str, Field(3)]
-    args: Annotated[List[NodeValue], Field(4)] = field(default_factory=list)
-    kwargs: Annotated[List[NamedNodeValue], Field(5)] = field(default_factory=list)
-    output_shape: Annotated[List[int], Field(6)] = field(default_factory=list)
-    output_dtype: Annotated[Optional[str], Field(7)] = None
-    output_device: Annotated[Optional[str], Field(8)] = None
-    output_stride: Annotated[List[int], Field(9)] = field(default_factory=list)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to a clean dictionary representation"""
-        return {
-            "name": self.name,
-            "op": self.op,
-            "target": self.target,
-            "args": [arg.to_dict() for arg in self.args],
-            "kwargs": [kwarg.to_dict() for kwarg in self.kwargs],
-            "output_shape": self.output_shape,
-            "output_dtype": self.output_dtype,
-            "output_device": self.output_device,
-            "output_stride": self.output_stride
-        }
-
-
-@dataclass
-class GraphData(BaseMessage):
-    """Represents an FX graph"""
-    nodes: Annotated[List[NodeData], Field(1)] = field(default_factory=list)
-    output_node_index: Annotated[int, Field(2)] = -1
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to a clean dictionary representation"""
-        return {
-            "nodes": [node.to_dict() for node in self.nodes],
-            "output_node_index": self.output_node_index
-        }
-
-
-@dataclass
-class GraphModuleData(BaseMessage):
-    """Represents an FX GraphModule"""
-    graph: Annotated[GraphData, Field(1)]
-    user_preserved_attributes: Annotated[List[NamedNodeValue], Field(2)] = field(default_factory=list)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to a clean dictionary representation"""
-        return {
-            "graph": self.graph.to_dict(),
-            "user_preserved_attributes": [attr.to_dict() for attr in self.user_preserved_attributes]
-        }
+def dict_to_node_values(d: Dict[str, Any]) -> List[pb.NamedNodeValue]:
+    """Convert a dictionary to a list of NamedNodeValue objects for protobuf serialization"""
+    node_values = []
+    for key, value in d.items():
+        node_value = from_python_value(value)
+        named_node_value = pb.NamedNodeValue(name=key, value=node_value)
+        node_values.append(named_node_value)
+    return node_values
 
 
 # Helper function to get the qualified name string for callables
@@ -234,15 +79,15 @@ def _get_qualified_name_string(target: typing.Any) -> str:
         return repr(target)
 
 
-def serialize(gm: torch.fx.GraphModule) -> GraphModuleData:
+def serialize(gm: torch.fx.GraphModule) -> pb.GraphModuleData:
     """Asynchronously serialize a GraphModule to a JSON file using dataclasses."""
     # Create the GraphData and populate it with nodes
-    graph_data = GraphData()
+    graph_data = pb.GraphData()
     
     for i, node in enumerate(gm.graph.nodes):
         # Convert args to NodeValue objects
-        args = [NodeValue.from_python_value(arg) for arg in node.args]
-        kwargs = NamedNodeValue.from_dict(node.kwargs)
+        args = [from_python_value(arg) for arg in node.args]
+        kwargs = dict_to_node_values(node.kwargs)
         
         # Extract metadata if available
         output_shape = None
@@ -257,7 +102,7 @@ def serialize(gm: torch.fx.GraphModule) -> GraphModuleData:
             output_stride = tuple(meta_val.stride())
         
         # Create the NodeData
-        node_data = NodeData(
+        node_data = pb.NodeData(
             name=node.name,
             op=node.op,
             target=_get_qualified_name_string(node.target),
@@ -277,9 +122,9 @@ def serialize(gm: torch.fx.GraphModule) -> GraphModuleData:
     # Create the GraphModuleData with user preserved attributes
     user_preserved_attrs = []
     if hasattr(gm, 'meta') and '_user_preserved_attributes' in gm.meta:
-        user_preserved_attrs = NamedNodeValue.from_dict(gm.meta['_user_preserved_attributes'])
+        user_preserved_attrs = dict_to_node_values(gm.meta['_user_preserved_attributes'])
     
-    graph_module_data = GraphModuleData(
+    graph_module_data = pb.GraphModuleData(
         graph=graph_data,
         user_preserved_attributes=user_preserved_attrs
     )

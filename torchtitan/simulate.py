@@ -1,7 +1,5 @@
 from collections import Counter
-import contextlib
 import copy
-from dataclasses import dataclass
 import os
 from math import prod
 from typing import List, Iterator, Tuple
@@ -24,9 +22,8 @@ from torchtitan.fake.fake_pg import FakeStore
 from torchtitan import fx_serialize
 import aiofiles
 
-from pure_protobuf.message import BaseMessage
-from pure_protobuf.annotations import Field
-from typing_extensions import Annotated
+# Import protoc-generated classes
+from . import torch_titan_pb2 as pb
 
 
 class MockTokenizer(Tokenizer):
@@ -119,10 +116,6 @@ def generate_parallelism_configs(world_size: int) -> Iterator[Dict[str, int]]:
         assert prod(config.values()) == world_size
         yield config
 
-@dataclass
-class TraceResult(BaseMessage):
-    parallel_dims: Annotated[ParallelDims, Field(1)]
-    graph_module: Annotated[fx_serialize.GraphModuleData, Field(2)]
 
 async def trace_model(
     *,
@@ -133,7 +126,7 @@ async def trace_model(
     device: torch.device,
     world_size: int,
     parallelism_config: Optional[Dict[str, int]] = None,
-) -> Tuple[TraceResult, str, Dict[str, float]]:
+) -> Tuple[pb.TraceResult, str, Dict[str, float]]:
     """
     Trace the model and measure forward pass latency.
 
@@ -143,7 +136,7 @@ async def trace_model(
         parallelism_config: Optional custom parallelism configuration
 
     Returns:
-        Tuple of (forward pass latency in seconds, timing breakdown dict)
+        Tuple of (TraceResult protobuf, readable graph string, timing breakdown dict)
     """
     timing = {}
     start_total = time.time()
@@ -255,12 +248,30 @@ async def trace_model(
         timing["tracing"] = time.time() - start_tracing
 
         start_export = time.time()
-        result = fx_serialize.serialize(make_fx_out) 
+        # fx_serialize.serialize now returns a protoc GraphModuleData
+        graph_module_proto = fx_serialize.serialize(make_fx_out)
         timing["export"] = time.time() - start_export
 
         timing["total"] = time.time() - start_total
 
-        return result, make_fx_out.print_readable(), timing
+        # Create ParallelConfig protobuf message from ParallelDims
+        parallel_config_proto = pb.ParallelConfig(
+            dp_replicate=parallel_dims.dp_replicate,
+            dp_shard=parallel_dims.dp_shard,
+            cp=parallel_dims.cp,
+            tp=parallel_dims.tp,
+            pp=parallel_dims.pp,
+            world_size=parallel_dims.world_size,
+            enable_loss_parallel=parallel_dims.loss_parallel_enabled,
+        )
+
+        # Create TraceResult protobuf message
+        result_proto = pb.TraceResult(
+            parallel_dims=parallel_config_proto,
+            graph_module=graph_module_proto
+        )
+
+        return result_proto, make_fx_out.print_readable(), timing
 
 
 async def main() -> None:
@@ -306,6 +317,7 @@ async def main() -> None:
     # Try all possible parallelism configurations
     async def run_config(i: int, config: Dict[str, int]):
         print(f"Testing configuration {i + 1}/{total_configs}: {config}")
+        # trace_model now returns a protoc TraceResult
         proto, code, timing = await trace_model(
             model_cls=ModelCls,
             model_args=model_args,
@@ -315,9 +327,12 @@ async def main() -> None:
             parallelism_config=config,
             device=device,
         )
-        out_bytes = bytes(proto)
-        async with aiofiles.open(f"traces/trace_{i + 1}.bin", "wb") as f:
+        # Serialize the protobuf message to bytes
+        out_bytes = proto.SerializeToString()
+        # Write binary protobuf data
+        async with aiofiles.open(f"traces/trace_{i + 1}.pb", "wb") as f:
             await f.write(out_bytes)
+        # Write readable graph code
         async with aiofiles.open(f"traces/trace_{i + 1}.py", "w") as f:
             await f.write(code)
         return f"Config {i}", timing
