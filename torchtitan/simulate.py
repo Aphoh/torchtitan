@@ -4,7 +4,7 @@ import copy
 from dataclasses import dataclass
 import os
 from math import prod
-from typing import List, Iterator
+from typing import List, Iterator, Tuple
 import time
 from typing import Dict, Optional
 import torch
@@ -124,7 +124,6 @@ class TraceResult(BaseMessage):
     parallel_dims: Annotated[ParallelDims, Field(1)]
     graph_module: Annotated[fx_serialize.GraphModuleData, Field(2)]
 
-
 async def trace_model(
     *,
     model_cls: type[Transformer],
@@ -134,7 +133,7 @@ async def trace_model(
     device: torch.device,
     world_size: int,
     parallelism_config: Optional[Dict[str, int]] = None,
-) -> float:
+) -> Tuple[TraceResult, str, Dict[str, float]]:
     """
     Trace the model and measure forward pass latency.
 
@@ -209,8 +208,8 @@ async def trace_model(
         optional_context_parallel_ctx = (
             dist_utils.create_context_parallel_ctx(
                 cp_mesh=world_mesh["cp"],
-                cp_buffers=[inputs, labels] + [m.freqs_cis for m in model_parts],
-                cp_seq_dims=[1, 1] + [0 for _ in model_parts],
+                cp_buffers=[inputs, labels] + [m.freqs_cis for m in optimizers.model_parts],
+                cp_seq_dims=[1, 1] + [0 for _ in optimizers.model_parts],
                 cp_no_restore_buffers={inputs, labels},
                 cp_rotate_method=job_config.parallelism.context_parallel_rotate_method,
             )
@@ -218,15 +217,13 @@ async def trace_model(
             else None
         )
 
-        def step(opt_sd, model_sd):
+        def step(opt_sd):
             optimizers.load_state_dict(opt_sd)
-            for m, sd in zip(model_parts, model_sd):
-                m.load_state_dict(sd)
             optimizers.zero_grad()
 
             with train_context(optional_context_parallel_ctx):
-                assert len(model_parts) == 1
-                pred = model_parts[0](inputs)
+                assert len(optimizers.model_parts) == 1
+                pred = optimizers.model_parts[0](inputs)
                 loss = loss_fn(pred, labels)
                 # need to free to before bwd to avoid peaking memory
                 del pred
@@ -239,7 +236,7 @@ async def trace_model(
                 pp_mesh=world_mesh["pp"] if parallel_dims.pp_enabled else None,
             )
             optimizers.step()
-            return opt_sd, model_sd
+            return optimizers.state_dict()
 
         start_tracing = time.time()
         make_fx_out = torch.fx.experimental.proxy_tensor.make_fx(
@@ -248,7 +245,7 @@ async def trace_model(
             decomposition_table={},
             _allow_non_fake_inputs=True,
             record_module_stack=True,
-        )(optimizers.state_dict(), [m.state_dict() for m in model_parts])
+        )(optimizers.state_dict())
         # Remove unecessary nodes
         for node in make_fx_out.graph.nodes:
             if node.op == "placeholder" and "val" not in node.meta:
@@ -263,7 +260,7 @@ async def trace_model(
 
         timing["total"] = time.time() - start_total
 
-        return result, timing
+        return result, make_fx_out.print_readable(), timing
 
 
 async def main() -> None:
@@ -309,7 +306,7 @@ async def main() -> None:
     # Try all possible parallelism configurations
     async def run_config(i: int, config: Dict[str, int]):
         print(f"Testing configuration {i + 1}/{total_configs}: {config}")
-        proto, timing = await trace_model(
+        proto, code, timing = await trace_model(
             model_cls=ModelCls,
             model_args=model_args,
             job_config=job_config,
@@ -321,6 +318,8 @@ async def main() -> None:
         out_bytes = bytes(proto)
         async with aiofiles.open(f"traces/trace_{i + 1}.bin", "wb") as f:
             await f.write(out_bytes)
+        async with aiofiles.open(f"traces/trace_{i + 1}.py", "w") as f:
+            await f.write(code)
         return f"Config {i}", timing
 
     os.makedirs("traces", exist_ok=True)
