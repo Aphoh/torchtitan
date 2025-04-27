@@ -14,31 +14,37 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1ctorchtitan/torch_titan.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x8b\x03\n\tNodeValue\x12\x30\n\nnull_value\x18\x01 \x01(\x0e\x32\x1a.google.protobuf.NullValueH\x00\x12\x14\n\nbool_value\x18\x02 \x01(\x08H\x00\x12\x13\n\tint_value\x18\x03 \x01(\x03H\x00\x12\x15\n\x0b\x66loat_value\x18\x04 \x01(\x01H\x00\x12\x16\n\x0cstring_value\x18\x05 \x01(\tH\x00\x12\x16\n\x0c\x64\x65vice_value\x18\x06 \x01(\tH\x00\x12\x15\n\x0b\x64type_value\x18\x07 \x01(\tH\x00\x12\x16\n\x0clayout_value\x18\x0c \x01(\tH\x00\x12\x1d\n\x13memory_format_value\x18\r \x01(\tH\x00\x12#\n\x0bshape_value\x18\x08 \x01(\x0b\x32\x0c.TensorShapeH\x00\x12(\n\x0esequence_value\x18\t \x01(\x0b\x32\x0e.SequenceValueH\x00\x12\x18\n\x0enode_ref_value\x18\n \x01(\tH\x00\x12\x14\n\nrepr_value\x18\x0b \x01(\tH\x00\x42\r\n\x0bvalue_oneof\"\x1b\n\x0bTensorShape\x12\x0c\n\x04\x64ims\x18\x01 \x03(\x03\"-\n\rSequenceValue\x12\x1c\n\x08\x65lements\x18\x01 \x03(\x0b\x32\n.NodeValue\"9\n\x0eNamedNodeValue\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x19\n\x05value\x18\x02 \x01(\x0b\x32\n.NodeValue\"g\n\x0e\x43ollectiveMeta\x12\x13\n\x0bgroup_ranks\x18\x01 \x03(\x05\x12\x18\n\x10\x63omm_tensor_size\x18\x02 \x01(\x03\x12\x12\n\ngroup_desc\x18\x03 \x01(\t\x12\x12\n\ngroup_name\x18\x04 \x01(\t\"\xf3\x01\n\x08NodeData\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\n\n\x02op\x18\x02 \x01(\t\x12\x0e\n\x06target\x18\x03 \x01(\t\x12\x18\n\x04\x61rgs\x18\x04 \x03(\x0b\x32\n.NodeValue\x12\x1f\n\x06kwargs\x18\x05 \x03(\x0b\x32\x0f.NamedNodeValue\x12\x14\n\x0coutput_shape\x18\x06 \x03(\x03\x12\x14\n\x0coutput_dtype\x18\x07 \x01(\t\x12\x15\n\routput_device\x18\x08 \x01(\t\x12\x15\n\routput_stride\x18\t \x03(\x03\x12(\n\x0f\x63ollective_meta\x18\n \x01(\x0b\x32\x0f.CollectiveMeta\"@\n\tGraphData\x12\x18\n\x05nodes\x18\x01 \x03(\x0b\x32\t.NodeData\x12\x19\n\x11output_node_index\x18\x02 \x01(\x05\"`\n\x0fGraphModuleData\x12\x19\n\x05graph\x18\x01 \x01(\x0b\x32\n.GraphData\x12\x32\n\x19user_preserved_attributes\x18\x02 \x03(\x0b\x32\x0f.NamedNodeValue\"\x8e\x01\n\x0eParallelConfig\x12\x14\n\x0c\x64p_replicate\x18\x01 \x01(\x05\x12\x10\n\x08\x64p_shard\x18\x02 \x01(\x05\x12\n\n\x02\x63p\x18\x03 \x01(\x05\x12\n\n\x02tp\x18\x04 \x01(\x05\x12\n\n\x02pp\x18\x05 \x01(\x05\x12\x12\n\nworld_size\x18\x06 \x01(\x05\x12\x1c\n\x14\x65nable_loss_parallel\x18\x07 \x01(\x08\"]\n\x0bTraceResult\x12&\n\rparallel_dims\x18\x01 \x01(\x0b\x32\x0f.ParallelConfig\x12&\n\x0cgraph_module\x18\x02 \x01(\x0b\x32\x10.GraphModuleDatab\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1ctorchtitan/torch_titan.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x87\x03\n\tNodeValue\x12\x30\n\nnull_value\x18\x01 \x01(\x0e\x32\x1a.google.protobuf.NullValueH\x00\x12\x14\n\nbool_value\x18\x02 \x01(\x08H\x00\x12\x13\n\tint_value\x18\x03 \x01(\x03H\x00\x12\x15\n\x0b\x66loat_value\x18\x04 \x01(\x01H\x00\x12\x16\n\x0cstring_value\x18\x05 \x01(\tH\x00\x12\x16\n\x0c\x64\x65vice_value\x18\x06 \x01(\tH\x00\x12\x15\n\x0b\x64type_value\x18\x07 \x01(\tH\x00\x12\x16\n\x0clayout_value\x18\x0c \x01(\tH\x00\x12\x1d\n\x13memory_format_value\x18\r \x01(\tH\x00\x12\x1f\n\x0bshape_value\x18\x08 \x01(\x0b\x32\x08.IntListH\x00\x12(\n\x0esequence_value\x18\t \x01(\x0b\x32\x0e.SequenceValueH\x00\x12\x18\n\x0enode_ref_value\x18\n \x01(\tH\x00\x12\x14\n\nrepr_value\x18\x0b \x01(\tH\x00\x42\r\n\x0bvalue_oneof\"\x17\n\x07IntList\x12\x0c\n\x04\x64ims\x18\x01 \x03(\x03\"-\n\rSequenceValue\x12\x1c\n\x08\x65lements\x18\x01 \x03(\x0b\x32\n.NodeValue\"9\n\x0eNamedNodeValue\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x19\n\x05value\x18\x02 \x01(\x0b\x32\n.NodeValue\"g\n\x0e\x43ollectiveMeta\x12\x13\n\x0bgroup_ranks\x18\x01 \x03(\x05\x12\x18\n\x10\x63omm_tensor_size\x18\x02 \x01(\x03\x12\x12\n\ngroup_desc\x18\x03 \x01(\t\x12\x12\n\ngroup_name\x18\x04 \x01(\t\"n\n\nTensorInfo\x12\x17\n\x05shape\x18\x01 \x01(\x0b\x32\x08.IntList\x12\x18\n\x06stride\x18\x02 \x01(\x0b\x32\x08.IntList\x12\r\n\x05\x64type\x18\x03 \x01(\t\x12\x0e\n\x06\x64\x65vice\x18\x04 \x01(\t\x12\x0e\n\x06layout\x18\x05 \x01(\t\"\xe9\x01\n\x08NodeData\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\n\n\x02op\x18\x02 \x01(\t\x12\x0e\n\x06target\x18\x03 \x01(\t\x12\x18\n\x04\x61rgs\x18\x04 \x03(\x0b\x32\n.NodeValue\x12\x1f\n\x06kwargs\x18\x05 \x03(\x0b\x32\x0f.NamedNodeValue\x12%\n\x0btensor_info\x18\x06 \x01(\x0b\x32\x0b.TensorInfoH\x00\x88\x01\x01\x12-\n\x0f\x63ollective_meta\x18\x07 \x01(\x0b\x32\x0f.CollectiveMetaH\x01\x88\x01\x01\x42\x0e\n\x0c_tensor_infoB\x12\n\x10_collective_meta\"@\n\tGraphData\x12\x18\n\x05nodes\x18\x01 \x03(\x0b\x32\t.NodeData\x12\x19\n\x11output_node_index\x18\x02 \x01(\x05\"\xcd\x01\n\x0fGraphModuleData\x12\x19\n\x05graph\x18\x01 \x01(\x0b\x32\n.GraphData\x12\x32\n\x19user_preserved_attributes\x18\x02 \x03(\x0b\x32\x0f.NamedNodeValue\x12.\n\x07\x62uffers\x18\x03 \x03(\x0b\x32\x1d.GraphModuleData.BuffersEntry\x1a;\n\x0c\x42uffersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x1a\n\x05value\x18\x02 \x01(\x0b\x32\x0b.TensorInfo:\x02\x38\x01\"\x8e\x01\n\x0eParallelConfig\x12\x14\n\x0c\x64p_replicate\x18\x01 \x01(\x05\x12\x10\n\x08\x64p_shard\x18\x02 \x01(\x05\x12\n\n\x02\x63p\x18\x03 \x01(\x05\x12\n\n\x02tp\x18\x04 \x01(\x05\x12\n\n\x02pp\x18\x05 \x01(\x05\x12\x12\n\nworld_size\x18\x06 \x01(\x05\x12\x1c\n\x14\x65nable_loss_parallel\x18\x07 \x01(\x08\"]\n\x0bTraceResult\x12&\n\rparallel_dims\x18\x01 \x01(\x0b\x32\x0f.ParallelConfig\x12&\n\x0cgraph_module\x18\x02 \x01(\x0b\x32\x10.GraphModuleDatab\x06proto3')
 
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, globals())
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'torchtitan.torch_titan_pb2', globals())
 if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
+  _GRAPHMODULEDATA_BUFFERSENTRY._options = None
+  _GRAPHMODULEDATA_BUFFERSENTRY._serialized_options = b'8\001'
   _NODEVALUE._serialized_start=63
-  _NODEVALUE._serialized_end=458
-  _TENSORSHAPE._serialized_start=460
-  _TENSORSHAPE._serialized_end=487
-  _SEQUENCEVALUE._serialized_start=489
-  _SEQUENCEVALUE._serialized_end=534
-  _NAMEDNODEVALUE._serialized_start=536
-  _NAMEDNODEVALUE._serialized_end=593
-  _COLLECTIVEMETA._serialized_start=595
-  _COLLECTIVEMETA._serialized_end=698
-  _NODEDATA._serialized_start=701
-  _NODEDATA._serialized_end=944
-  _GRAPHDATA._serialized_start=946
-  _GRAPHDATA._serialized_end=1010
-  _GRAPHMODULEDATA._serialized_start=1012
-  _GRAPHMODULEDATA._serialized_end=1108
-  _PARALLELCONFIG._serialized_start=1111
-  _PARALLELCONFIG._serialized_end=1253
-  _TRACERESULT._serialized_start=1255
-  _TRACERESULT._serialized_end=1348
+  _NODEVALUE._serialized_end=454
+  _INTLIST._serialized_start=456
+  _INTLIST._serialized_end=479
+  _SEQUENCEVALUE._serialized_start=481
+  _SEQUENCEVALUE._serialized_end=526
+  _NAMEDNODEVALUE._serialized_start=528
+  _NAMEDNODEVALUE._serialized_end=585
+  _COLLECTIVEMETA._serialized_start=587
+  _COLLECTIVEMETA._serialized_end=690
+  _TENSORINFO._serialized_start=692
+  _TENSORINFO._serialized_end=802
+  _NODEDATA._serialized_start=805
+  _NODEDATA._serialized_end=1038
+  _GRAPHDATA._serialized_start=1040
+  _GRAPHDATA._serialized_end=1104
+  _GRAPHMODULEDATA._serialized_start=1107
+  _GRAPHMODULEDATA._serialized_end=1312
+  _GRAPHMODULEDATA_BUFFERSENTRY._serialized_start=1253
+  _GRAPHMODULEDATA_BUFFERSENTRY._serialized_end=1312
+  _PARALLELCONFIG._serialized_start=1315
+  _PARALLELCONFIG._serialized_end=1457
+  _TRACERESULT._serialized_start=1459
+  _TRACERESULT._serialized_end=1552
 # @@protoc_insertion_point(module_scope)

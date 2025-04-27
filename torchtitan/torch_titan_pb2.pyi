@@ -27,12 +27,27 @@ class GraphData(_message.Message):
     def __init__(self, nodes: _Optional[_Iterable[_Union[NodeData, _Mapping]]] = ..., output_node_index: _Optional[int] = ...) -> None: ...
 
 class GraphModuleData(_message.Message):
-    __slots__ = ["graph", "user_preserved_attributes"]
+    __slots__ = ["buffers", "graph", "user_preserved_attributes"]
+    class BuffersEntry(_message.Message):
+        __slots__ = ["key", "value"]
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: TensorInfo
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[TensorInfo, _Mapping]] = ...) -> None: ...
+    BUFFERS_FIELD_NUMBER: _ClassVar[int]
     GRAPH_FIELD_NUMBER: _ClassVar[int]
     USER_PRESERVED_ATTRIBUTES_FIELD_NUMBER: _ClassVar[int]
+    buffers: _containers.MessageMap[str, TensorInfo]
     graph: GraphData
     user_preserved_attributes: _containers.RepeatedCompositeFieldContainer[NamedNodeValue]
-    def __init__(self, graph: _Optional[_Union[GraphData, _Mapping]] = ..., user_preserved_attributes: _Optional[_Iterable[_Union[NamedNodeValue, _Mapping]]] = ...) -> None: ...
+    def __init__(self, graph: _Optional[_Union[GraphData, _Mapping]] = ..., user_preserved_attributes: _Optional[_Iterable[_Union[NamedNodeValue, _Mapping]]] = ..., buffers: _Optional[_Mapping[str, TensorInfo]] = ...) -> None: ...
+
+class IntList(_message.Message):
+    __slots__ = ["dims"]
+    DIMS_FIELD_NUMBER: _ClassVar[int]
+    dims: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, dims: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class NamedNodeValue(_message.Message):
     __slots__ = ["name", "value"]
@@ -43,28 +58,22 @@ class NamedNodeValue(_message.Message):
     def __init__(self, name: _Optional[str] = ..., value: _Optional[_Union[NodeValue, _Mapping]] = ...) -> None: ...
 
 class NodeData(_message.Message):
-    __slots__ = ["args", "collective_meta", "kwargs", "name", "op", "output_device", "output_dtype", "output_shape", "output_stride", "target"]
+    __slots__ = ["args", "collective_meta", "kwargs", "name", "op", "target", "tensor_info"]
     ARGS_FIELD_NUMBER: _ClassVar[int]
     COLLECTIVE_META_FIELD_NUMBER: _ClassVar[int]
     KWARGS_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     OP_FIELD_NUMBER: _ClassVar[int]
-    OUTPUT_DEVICE_FIELD_NUMBER: _ClassVar[int]
-    OUTPUT_DTYPE_FIELD_NUMBER: _ClassVar[int]
-    OUTPUT_SHAPE_FIELD_NUMBER: _ClassVar[int]
-    OUTPUT_STRIDE_FIELD_NUMBER: _ClassVar[int]
     TARGET_FIELD_NUMBER: _ClassVar[int]
+    TENSOR_INFO_FIELD_NUMBER: _ClassVar[int]
     args: _containers.RepeatedCompositeFieldContainer[NodeValue]
     collective_meta: CollectiveMeta
     kwargs: _containers.RepeatedCompositeFieldContainer[NamedNodeValue]
     name: str
     op: str
-    output_device: str
-    output_dtype: str
-    output_shape: _containers.RepeatedScalarFieldContainer[int]
-    output_stride: _containers.RepeatedScalarFieldContainer[int]
     target: str
-    def __init__(self, name: _Optional[str] = ..., op: _Optional[str] = ..., target: _Optional[str] = ..., args: _Optional[_Iterable[_Union[NodeValue, _Mapping]]] = ..., kwargs: _Optional[_Iterable[_Union[NamedNodeValue, _Mapping]]] = ..., output_shape: _Optional[_Iterable[int]] = ..., output_dtype: _Optional[str] = ..., output_device: _Optional[str] = ..., output_stride: _Optional[_Iterable[int]] = ..., collective_meta: _Optional[_Union[CollectiveMeta, _Mapping]] = ...) -> None: ...
+    tensor_info: TensorInfo
+    def __init__(self, name: _Optional[str] = ..., op: _Optional[str] = ..., target: _Optional[str] = ..., args: _Optional[_Iterable[_Union[NodeValue, _Mapping]]] = ..., kwargs: _Optional[_Iterable[_Union[NamedNodeValue, _Mapping]]] = ..., tensor_info: _Optional[_Union[TensorInfo, _Mapping]] = ..., collective_meta: _Optional[_Union[CollectiveMeta, _Mapping]] = ...) -> None: ...
 
 class NodeValue(_message.Message):
     __slots__ = ["bool_value", "device_value", "dtype_value", "float_value", "int_value", "layout_value", "memory_format_value", "node_ref_value", "null_value", "repr_value", "sequence_value", "shape_value", "string_value"]
@@ -92,9 +101,9 @@ class NodeValue(_message.Message):
     null_value: _struct_pb2.NullValue
     repr_value: str
     sequence_value: SequenceValue
-    shape_value: TensorShape
+    shape_value: IntList
     string_value: str
-    def __init__(self, null_value: _Optional[_Union[_struct_pb2.NullValue, str]] = ..., bool_value: bool = ..., int_value: _Optional[int] = ..., float_value: _Optional[float] = ..., string_value: _Optional[str] = ..., device_value: _Optional[str] = ..., dtype_value: _Optional[str] = ..., layout_value: _Optional[str] = ..., memory_format_value: _Optional[str] = ..., shape_value: _Optional[_Union[TensorShape, _Mapping]] = ..., sequence_value: _Optional[_Union[SequenceValue, _Mapping]] = ..., node_ref_value: _Optional[str] = ..., repr_value: _Optional[str] = ...) -> None: ...
+    def __init__(self, null_value: _Optional[_Union[_struct_pb2.NullValue, str]] = ..., bool_value: bool = ..., int_value: _Optional[int] = ..., float_value: _Optional[float] = ..., string_value: _Optional[str] = ..., device_value: _Optional[str] = ..., dtype_value: _Optional[str] = ..., layout_value: _Optional[str] = ..., memory_format_value: _Optional[str] = ..., shape_value: _Optional[_Union[IntList, _Mapping]] = ..., sequence_value: _Optional[_Union[SequenceValue, _Mapping]] = ..., node_ref_value: _Optional[str] = ..., repr_value: _Optional[str] = ...) -> None: ...
 
 class ParallelConfig(_message.Message):
     __slots__ = ["cp", "dp_replicate", "dp_shard", "enable_loss_parallel", "pp", "tp", "world_size"]
@@ -120,11 +129,19 @@ class SequenceValue(_message.Message):
     elements: _containers.RepeatedCompositeFieldContainer[NodeValue]
     def __init__(self, elements: _Optional[_Iterable[_Union[NodeValue, _Mapping]]] = ...) -> None: ...
 
-class TensorShape(_message.Message):
-    __slots__ = ["dims"]
-    DIMS_FIELD_NUMBER: _ClassVar[int]
-    dims: _containers.RepeatedScalarFieldContainer[int]
-    def __init__(self, dims: _Optional[_Iterable[int]] = ...) -> None: ...
+class TensorInfo(_message.Message):
+    __slots__ = ["device", "dtype", "layout", "shape", "stride"]
+    DEVICE_FIELD_NUMBER: _ClassVar[int]
+    DTYPE_FIELD_NUMBER: _ClassVar[int]
+    LAYOUT_FIELD_NUMBER: _ClassVar[int]
+    SHAPE_FIELD_NUMBER: _ClassVar[int]
+    STRIDE_FIELD_NUMBER: _ClassVar[int]
+    device: str
+    dtype: str
+    layout: str
+    shape: IntList
+    stride: IntList
+    def __init__(self, shape: _Optional[_Union[IntList, _Mapping]] = ..., stride: _Optional[_Union[IntList, _Mapping]] = ..., dtype: _Optional[str] = ..., device: _Optional[str] = ..., layout: _Optional[str] = ...) -> None: ...
 
 class TraceResult(_message.Message):
     __slots__ = ["graph_module", "parallel_dims"]

@@ -10,6 +10,15 @@ from typing import Dict, List, Any
 from google.protobuf.struct_pb2 import NullValue
 from . import torch_titan_pb2 as pb
 
+def get_tensor_info(tensor: torch.Tensor) -> pb.TensorInfo:
+    return pb.TensorInfo(
+        shape = pb.IntList(dims=tuple(tensor.shape)),
+        stride = pb.IntList(dims=tuple(tensor.stride())),
+        dtype = str(tensor.dtype),
+        device = str(tensor.device),
+        layout = str(tensor.layout),
+    ) 
+
 def from_python_value(value: Any) -> pb.NodeValue:
     """Convert a Python value to a NodeValue object for protobuf serialization"""
     
@@ -90,16 +99,10 @@ def serialize(gm: torch.fx.GraphModule) -> pb.GraphModuleData:
         kwargs = dict_to_node_values(node.kwargs)
         
         # Extract metadata if available
-        output_shape = None
-        output_dtype = None
-        output_device = None
-        output_stride = None
+        tensor_info = None
         meta_val = node.meta.get("val")
         if isinstance(meta_val, torch.Tensor):
-            output_shape = tuple(meta_val.shape)
-            output_dtype = str(meta_val.dtype)
-            output_device = str(meta_val.device)
-            output_stride = tuple(meta_val.stride())
+            tensor_info = get_tensor_info(meta_val)
         collective_meta = node.meta.get("collective_meta", None)
         
         # Create the NodeData
@@ -109,10 +112,7 @@ def serialize(gm: torch.fx.GraphModule) -> pb.GraphModuleData:
             target=_get_qualified_name_string(node.target),
             args=args,
             kwargs=kwargs,
-            output_shape=output_shape,
-            output_dtype=output_dtype,
-            output_device=output_device,
-            output_stride=output_stride,
+            tensor_info=tensor_info,
             collective_meta=collective_meta,
         )
         
@@ -126,9 +126,12 @@ def serialize(gm: torch.fx.GraphModule) -> pb.GraphModuleData:
     if hasattr(gm, 'meta') and '_user_preserved_attributes' in gm.meta:
         user_preserved_attrs = dict_to_node_values(gm.meta['_user_preserved_attributes'])
     
+    buffers = {name: get_tensor_info(tensor) for name, tensor in gm.named_buffers()}
+    
     graph_module_data = pb.GraphModuleData(
         graph=graph_data,
-        user_preserved_attributes=user_preserved_attrs
+        user_preserved_attributes=user_preserved_attrs,
+        buffers=buffers,
     )
     
     return graph_module_data
