@@ -6,6 +6,18 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class CollectiveMeta(_message.Message):
+    __slots__ = ["comm_tensor_size", "group_desc", "group_name", "group_ranks"]
+    COMM_TENSOR_SIZE_FIELD_NUMBER: _ClassVar[int]
+    GROUP_DESC_FIELD_NUMBER: _ClassVar[int]
+    GROUP_NAME_FIELD_NUMBER: _ClassVar[int]
+    GROUP_RANKS_FIELD_NUMBER: _ClassVar[int]
+    comm_tensor_size: int
+    group_desc: str
+    group_name: str
+    group_ranks: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, group_ranks: _Optional[_Iterable[int]] = ..., comm_tensor_size: _Optional[int] = ..., group_desc: _Optional[str] = ..., group_name: _Optional[str] = ...) -> None: ...
+
 class GraphData(_message.Message):
     __slots__ = ["nodes", "output_node_index"]
     NODES_FIELD_NUMBER: _ClassVar[int]
@@ -31,8 +43,9 @@ class NamedNodeValue(_message.Message):
     def __init__(self, name: _Optional[str] = ..., value: _Optional[_Union[NodeValue, _Mapping]] = ...) -> None: ...
 
 class NodeData(_message.Message):
-    __slots__ = ["args", "kwargs", "name", "op", "output_device", "output_dtype", "output_shape", "output_stride", "target"]
+    __slots__ = ["args", "collective_meta", "kwargs", "name", "op", "output_device", "output_dtype", "output_shape", "output_stride", "target"]
     ARGS_FIELD_NUMBER: _ClassVar[int]
+    COLLECTIVE_META_FIELD_NUMBER: _ClassVar[int]
     KWARGS_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     OP_FIELD_NUMBER: _ClassVar[int]
@@ -42,6 +55,7 @@ class NodeData(_message.Message):
     OUTPUT_STRIDE_FIELD_NUMBER: _ClassVar[int]
     TARGET_FIELD_NUMBER: _ClassVar[int]
     args: _containers.RepeatedCompositeFieldContainer[NodeValue]
+    collective_meta: CollectiveMeta
     kwargs: _containers.RepeatedCompositeFieldContainer[NamedNodeValue]
     name: str
     op: str
@@ -50,7 +64,7 @@ class NodeData(_message.Message):
     output_shape: _containers.RepeatedScalarFieldContainer[int]
     output_stride: _containers.RepeatedScalarFieldContainer[int]
     target: str
-    def __init__(self, name: _Optional[str] = ..., op: _Optional[str] = ..., target: _Optional[str] = ..., args: _Optional[_Iterable[_Union[NodeValue, _Mapping]]] = ..., kwargs: _Optional[_Iterable[_Union[NamedNodeValue, _Mapping]]] = ..., output_shape: _Optional[_Iterable[int]] = ..., output_dtype: _Optional[str] = ..., output_device: _Optional[str] = ..., output_stride: _Optional[_Iterable[int]] = ...) -> None: ...
+    def __init__(self, name: _Optional[str] = ..., op: _Optional[str] = ..., target: _Optional[str] = ..., args: _Optional[_Iterable[_Union[NodeValue, _Mapping]]] = ..., kwargs: _Optional[_Iterable[_Union[NamedNodeValue, _Mapping]]] = ..., output_shape: _Optional[_Iterable[int]] = ..., output_dtype: _Optional[str] = ..., output_device: _Optional[str] = ..., output_stride: _Optional[_Iterable[int]] = ..., collective_meta: _Optional[_Union[CollectiveMeta, _Mapping]] = ...) -> None: ...
 
 class NodeValue(_message.Message):
     __slots__ = ["bool_value", "device_value", "dtype_value", "float_value", "int_value", "layout_value", "memory_format_value", "node_ref_value", "null_value", "repr_value", "sequence_value", "shape_value", "string_value"]

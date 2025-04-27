@@ -1,5 +1,6 @@
 from collections import Counter
 import copy
+from operator import getitem
 import os
 from math import prod
 from typing import List, Iterator, Tuple
@@ -246,6 +247,36 @@ async def trace_model(
         make_fx_out.graph.eliminate_dead_code()
         make_fx_out.recompile()
         timing["tracing"] = time.time() - start_tracing
+
+        # Retrieve collective metadata
+        for node in make_fx_out.graph.nodes:
+            if node.op != "call_function":
+                continue
+            from torch.distributed._tools.fake_collectives import collective_ops, CollectiveOp
+            import torch.distributed as dist
+            if node.target == torch.ops._c10d_functional.wait_tensor.default:
+                continue 
+            if node.target in collective_ops:
+                print("Got collective op", node.target)
+                args = list(node.args)
+                for i, a in enumerate(args):
+                    if "_torchbind_obj" in getattr(a, "name", ""):
+                        args[i] = getattr(make_fx_out, a.name)
+                    elif getattr(a, "target", None) == getitem:
+                        t = args[i].args[0]
+                        args[i] = t.meta["val"][args[i].args[1]]
+                    elif isinstance((val := getattr(a, "meta", {}).get("val")), torch._subclasses.FakeTensor):
+                        args[i] = val
+                print("Args", args)
+                group = CollectiveOp.get_process_group(node.target, args)
+                res = node.meta["val"]
+                size = CollectiveOp.get_comm_tensor_size(node.target, res, args, node.kwargs)
+                node.meta["collective_meta"] = pb.CollectiveMeta(
+                    group_ranks=dist.get_process_group_ranks(group),
+                    comm_tensor_size=size,
+                    group_desc=group.group_desc,
+                    group_name=group.name(),
+                )
 
         start_export = time.time()
         # fx_serialize.serialize now returns a protoc GraphModuleData

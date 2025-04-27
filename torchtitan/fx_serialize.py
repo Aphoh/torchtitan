@@ -100,6 +100,7 @@ def serialize(gm: torch.fx.GraphModule) -> pb.GraphModuleData:
             output_dtype = str(meta_val.dtype)
             output_device = str(meta_val.device)
             output_stride = tuple(meta_val.stride())
+        collective_meta = node.meta.get("collective_meta", None)
         
         # Create the NodeData
         node_data = pb.NodeData(
@@ -111,7 +112,8 @@ def serialize(gm: torch.fx.GraphModule) -> pb.GraphModuleData:
             output_shape=output_shape,
             output_dtype=output_dtype,
             output_device=output_device,
-            output_stride=output_stride
+            output_stride=output_stride,
+            collective_meta=collective_meta,
         )
         
         graph_data.nodes.append(node_data)
