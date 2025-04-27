@@ -117,6 +117,9 @@ def generate_parallelism_configs(world_size: int) -> Iterator[Dict[str, int]]:
         assert prod(config.values()) == world_size
         yield config
 
+def parallel_config_to_str(config: Dict[str, int]) -> str:
+    ws = prod(config.values())
+    return f"ws{ws}cp{config['cp']}dp{config['dp_shard']}tp{config['tp']}pp{config['pp']}"
 
 async def trace_model(
     *,
@@ -360,11 +363,12 @@ async def main() -> None:
         )
         # Serialize the protobuf message to bytes
         out_bytes = proto.SerializeToString()
+        name = parallel_config_to_str(config)
         # Write binary protobuf data
-        async with aiofiles.open(f"traces/trace_{i + 1}.pb", "wb") as f:
+        async with aiofiles.open(f"traces/{name}.pb", "wb") as f:
             await f.write(out_bytes)
         # Write readable graph code
-        async with aiofiles.open(f"traces/trace_{i + 1}.py", "w") as f:
+        async with aiofiles.open(f"traces/{name}.py", "w") as f:
             await f.write(code)
         return f"Config {i}", timing
 
