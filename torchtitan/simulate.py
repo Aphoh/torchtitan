@@ -125,6 +125,7 @@ async def trace_model(
     *,
     model_cls: type[Transformer],
     model_args: TransformerModelArgs,
+    batch_size: int,
     job_config: JobConfig,
     train_spec: TrainSpec,
     device: torch.device,
@@ -200,7 +201,7 @@ async def trace_model(
             model_parts, job_config, FTManager(None)
         )
         # Create the model just once
-        inputs = torch.randint(0, 128256, (1, seq_length), dtype=torch.int32)
+        inputs = torch.randint(0, 128256, (batch_size // (parallel_dims.dp_shard * parallel_dims.dp_replicate), seq_length), dtype=torch.int32)
         labels = inputs.clone().detach().to(torch.long)
         optional_context_parallel_ctx = (
             dist_utils.create_context_parallel_ctx(
@@ -260,7 +261,6 @@ async def trace_model(
             if node.target == torch.ops._c10d_functional.wait_tensor.default:
                 continue 
             if node.target in collective_ops:
-                print("Got collective op", node.target)
                 args = list(node.args)
                 for i, a in enumerate(args):
                     if "_torchbind_obj" in getattr(a, "name", ""):
@@ -270,7 +270,6 @@ async def trace_model(
                         args[i] = t.meta["val"][args[i].args[1]]
                     elif isinstance((val := getattr(a, "meta", {}).get("val")), torch._subclasses.FakeTensor):
                         args[i] = val
-                print("Args", args)
                 group = CollectiveOp.get_process_group(node.target, args)
                 res = node.meta["val"]
                 size = CollectiveOp.get_comm_tensor_size(node.target, res, args, node.kwargs)
@@ -343,9 +342,12 @@ async def main() -> None:
     print(f"Prime factorization: {prime_factorize(world_size)}")
 
     results = []
+    batch_size = 2**22 // model_args.max_seq_len # 4 million token batch size
+    assert batch_size > 0, "Batch size must be greater than 0"
 
     # Generate all configurations in advance to show progress
     configs = list(generate_parallelism_configs(world_size))
+    configs = [c for c in configs if (c["tp"] <= model_args.n_kv_heads) and (c["dp_shard"] <= batch_size) and (c["cp"] <= 32)]
     total_configs = len(configs)
 
     # Try all possible parallelism configurations
@@ -355,6 +357,7 @@ async def main() -> None:
         proto, code, timing = await trace_model(
             model_cls=ModelCls,
             model_args=model_args,
+            batch_size=batch_size,
             job_config=job_config,
             train_spec=train_spec,
             world_size=world_size,
